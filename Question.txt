@@ -1,0 +1,1 @@
+发送邮件改为异步时会报错'ascii' codec can't encode characters in position 0-1: ordinal not in range(128)

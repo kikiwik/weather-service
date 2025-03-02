@@ -1,0 +1,130 @@
+from fastapi import HTTPException,status
+import random
+import time
+import json
+from email.mime.multipart import MIMEMultipart
+from email.header import Header
+from email.mime.text import MIMEText
+from email.utils import formataddr
+from config import email_settings
+import logging
+#import aiosmtplib
+import smtplib
+import asyncio
+import re
+import bcrypt
+
+PASSWORD_REGEX = re.compile(r"^[a-zA-Z0-9@#$%^&+=]{8,}$")
+logging.basicConfig(level=logging.INFO)
+
+#验证登录密码
+def verify_password(password,hashed_password):
+    return bcrypt.checkpw(password.encode('utf-8'),hashed_password.encode('utf-8'))
+
+def password_validatora(password:str):
+    if not PASSWORD_REGEX.match(password):
+        raise HTTPException(
+            status_code=400,
+            detail="Password must contain only allowed characters and be at least 8 characters long."
+        )
+
+#验证码发送
+def load_config():
+    email_config = email_settings.email if hasattr(email_settings, 'email') else {}
+
+    # 从配置中获取账户和密码
+    my_account = email_config.get("my_account")
+    my_pass = email_config.get("my_pass")
+
+    # 检查是否缺少配置
+    if not my_account or not my_pass:
+        raise ValueError("Missing email account or password in config.")
+
+    return my_account,my_pass
+
+my_account,my_pass=load_config()
+
+async def create_verification_code(email: str,redis_client) -> str:
+    # 生成6位随机验证码
+    code = str(random.randint(100000, 999999))
+    # 当前时间戳
+    current_timestamp = time.time()
+    # 设置验证码有效期为300秒
+    expiry_timestamp = current_timestamp + 300
+    # 构造存储数据
+    verification_data = {
+        "code": code,
+        "timestamp": current_timestamp,
+        "expiry": expiry_timestamp
+    }
+    # 存储到redis
+    await redis_client.set(
+        name=email,
+        value=json.dumps(verification_data),
+        ex=300  # 设置300秒后自动过期
+    )
+    return code
+
+async def send_verification_code(code:str ,email:str) -> bool:
+    try:
+         # 构建邮件内容（带HTML格式）
+        msg = MIMEMultipart()
+        msg.attach(MIMEText(
+            f"""<!DOCTYPE html>
+            <html><body>
+                <p>尊敬的用户：</p>
+                <p>您的验证码为 <strong style="color: #1890ff;">{code}</strong></p>
+                <p>有效期3分钟，请勿泄露给他人。</p>
+            </body></html>""",
+            'html',
+            'utf-8'
+        ))
+
+        # 设置邮件头（兼容不同客户端）
+        msg['From'] = formataddr(
+            (Header("天气预警系统", 'utf-8').encode(), my_account)
+        )
+        msg['To'] = email  # 直接使用标准邮箱地址
+        msg['Subject'] = Header("您的验证码（3分钟内有效）", 'utf-8').encode()
+        '''async with aiosmtplib.SMTP_SSL(
+            hostname="smtp.qq.com",
+            port=465,
+            timeout=10
+        ) as server :
+            await server.login(my_account,my_pass)
+            await server.sendmail(my_account,[email],msg.as_string())
+        print(f"验证码{code}已发送至{email}")
+        return True
+        
+    except aiosmtplib.SMTPException as e:
+        print(f"邮件发送失败:{str(e)}")
+        return False
+    except Exception as e:
+        print(f"其他错误:{str(e)}")
+        return False'''
+        
+        server=smtplib.SMTP_SSL("smtp.qq.com",465)
+        server.login(my_account,my_pass)
+        server.sendmail(my_account,[email],msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"其他错误:{str(e)}")
+        return False
+
+async def email_worker(redis_client,stop_event:asyncio.Event): 
+    while not stop_event.is_set():
+        try:
+            task = await redis_client.blpop("email_queue",timeout=5)
+            if not task:
+                continue
+
+            _,task_data = task
+            task_info = json.loads(task_data)
+            email=task_info["email"]
+            code=task_info["code"]
+
+            await send_verification_code(code,email)
+        except Exception as e:
+            print(f"邮件发送失败: {e},任务数据: {task_data}")
+            
