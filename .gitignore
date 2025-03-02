@@ -1,0 +1,18 @@
+# 忽略所有以 .log 结尾的文件
+*.log
+
+# 忽略特定文件
+secrets.env
+
+# 忽略目录（末尾加 / ）
+node_modules/
+build/
+
+# 忽略系统文件（如 macOS 的 .DS_Store）
+.DS_Store
+
+# 忽略 IDE 配置文件（如 VS Code 的 .vscode/）
+.idea/
+.vscode/
+
+
