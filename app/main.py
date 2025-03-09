@@ -1,7 +1,11 @@
+#main
 from fastapi import FastAPI,Request,Response,status,Depends
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 from dao.redis import redis_connect
+from dao import databases
 from utils.services import email_worker,create_verification_code
+from routers import users
 from redis import Redis
 import asyncio
 import json
@@ -9,35 +13,45 @@ import time
 
 
 @asynccontextmanager
-async def redis_service(app: FastAPI):
+async def lifespan(app: FastAPI):
+    print("数据库连接池初始化")
+    async with databases.async_engine.connect() as conn:
+        await conn.exec_driver_sql("SELECT 1")
+
+    print("Redis初始化链接")
     app.state.redis = await redis_connect()
     app.state.email_worker_stop = asyncio.Event()
     app.state.email_worker_task = asyncio.create_task(
         email_worker(app.state.redis, app.state.email_worker_stop)
     )
 
-    yield print("reids服务已启动")
+    yield print("redis服务已启动\n数据库服务已启动\n")
+    await databases.async_engine.dispose()
+    print("数据库连接池已关闭")
+
     app.state.email_worker_stop.set()
     await app.state.email_worker_task
     await app.state.redis.close()
-    print("reids服务已关闭")
+    print("redis服务已关闭")
 
 app=FastAPI(
-    lifespan=redis_service
+    lifespan=lifespan
 )
 
 @app.get("/")
 async def status_test():
     return{"message":"OK"}
 
-@app.post("/send-verification-code")
+app.include_router(users.router, prefix="/api/users", tags=["users"])
+
+#测试
+@app.post("/test-send-verification-code")
 async def send_verification_code(redis_client: Redis = Depends(redis_connect)):
     email="alwaysfive1207@gmail.com"
     # 生成验证码
-    code = await create_verification_code(email, redis_client)
+    #code = await create_verification_code(email, redis_client)
     await redis_client.rpush("email_queue", json.dumps({
         "email": email,
-        "code": code,
         "timestamp": time.time()
     }))
     
@@ -46,3 +60,9 @@ async def send_verification_code(redis_client: Redis = Depends(redis_connect)):
         "message": "验证码请求已加入队列",
         "queue_position": await redis_client.llen("email_queue")
     }
+
+@app.get("/test-db")
+async def test_db_connection(db :databases.AsyncSession =Depends(databases.get_async_db)):
+    result = await db.execute(text("SELECT NOW()"))
+    current_time = result.scalar_one()
+    return{"Current_time":current_time}

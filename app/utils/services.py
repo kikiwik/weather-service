@@ -2,6 +2,7 @@ from fastapi import HTTPException,status
 import random
 import time
 import json
+import httpx
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from email.mime.text import MIMEText
@@ -13,12 +14,13 @@ import smtplib
 import asyncio
 import re
 import bcrypt
+from dao.schemas import CodeInput
 
 PASSWORD_REGEX = re.compile(r"^[a-zA-Z0-9@#$%^&+=]{8,}$")
 logging.basicConfig(level=logging.INFO)
 
-#验证登录密码
-def verify_password(password,hashed_password):
+#密码hash化存储
+def verify_password(password,hashed_password) :
     return bcrypt.checkpw(password.encode('utf-8'),hashed_password.encode('utf-8'))
 
 def password_validatora(password:str):
@@ -65,8 +67,9 @@ async def create_verification_code(email: str,redis_client) -> str:
     )
     return code
 
-async def send_verification_code(code:str ,email:str) -> bool:
+async def send_verification_code(email:str,redis_client) -> bool:
     try:
+        code=await create_verification_code(email,redis_client)
          # 构建邮件内容（带HTML格式）
         msg = MIMEMultipart()
         msg.attach(MIMEText(
@@ -94,15 +97,13 @@ async def send_verification_code(code:str ,email:str) -> bool:
             await server.login(my_account,my_pass)
             await server.sendmail(my_account,[email],msg.as_string())
         print(f"验证码{code}已发送至{email}")
-        return True
-        
+        return True    
     except aiosmtplib.SMTPException as e:
         print(f"邮件发送失败:{str(e)}")
         return False
     except Exception as e:
         print(f"其他错误:{str(e)}")
         return False'''
-        
         server=smtplib.SMTP_SSL("smtp.qq.com",465)
         server.login(my_account,my_pass)
         server.sendmail(my_account,[email],msg.as_string())
@@ -122,9 +123,31 @@ async def email_worker(redis_client,stop_event:asyncio.Event):
             _,task_data = task
             task_info = json.loads(task_data)
             email=task_info["email"]
-            code=task_info["code"]
-
-            await send_verification_code(code,email)
+            await send_verification_code(email,redis_client)
         except Exception as e:
             print(f"邮件发送失败: {e},任务数据: {task_data}")
             
+async def verify_verification_code(email:str,user_code: CodeInput,redis_client) -> bool:
+    #user_code = await get_user_input(email)  # 获取用户输入的验证码
+    code=user_code.verification_code
+    correct_code_json = await redis_client.get(email)
+    correct_code_data=json.loads(correct_code_json.decode())
+    correct_code=correct_code_data.get("code")
+    if correct_code and code == correct_code:
+        return True
+    return False
+
+
+async def check_email_rate_limit(email:str,redis_client,limit_interval:int=300,max_attempts: int = 1) -> bool:
+    key=f"rate_limit{email}"
+    current_attempts=await redis_client.get(key)
+    if current_attempts == None:
+        await redis_client.set(key,1,ex=limit_interval)
+        return True
+    else:
+        attempts = int (current_attempts)
+        if attempts < max_attempts:
+            await redis_client.incr(key)
+            return True
+        else:
+            return False
