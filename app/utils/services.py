@@ -15,36 +15,34 @@ import asyncio
 import re
 import bcrypt
 from dao.schemas import CodeInput
+import os
+from dotenv import load_dotenv
+import jwt
 
 PASSWORD_REGEX = re.compile(r"^[a-zA-Z0-9@#$%^&+=]{8,}$")
 logging.basicConfig(level=logging.INFO)
 
-#密码hash化存储
+load_dotenv()
+api_key = os.environ.get("HEFENG_API_KEY")
+api_id = os.environ.get("API_ID")
+key_id = os.environ.get("KEY_ID")
+my_account=os.environ.get("MAIL_ACCOUNT")
+my_pass=os.environ.get("MAIL_PASS")
+print(f"api{api_key}")
+
+
+#密码比对
 def verify_password(password,hashed_password) :
     return bcrypt.checkpw(password.encode('utf-8'),hashed_password.encode('utf-8'))
 
-def password_validatora(password:str):
+'''def password_validatora(password:str):
     if not PASSWORD_REGEX.match(password):
         raise HTTPException(
             status_code=400,
             detail="Password must contain only allowed characters and be at least 8 characters long."
-        )
+        )'''
 
 #验证码发送
-def load_config():
-    email_config = email_settings.email if hasattr(email_settings, 'email') else {}
-
-    # 从配置中获取账户和密码
-    my_account = email_config.get("my_account")
-    my_pass = email_config.get("my_pass")
-
-    # 检查是否缺少配置
-    if not my_account or not my_pass:
-        raise ValueError("Missing email account or password in config.")
-
-    return my_account,my_pass
-
-my_account,my_pass=load_config()
 
 async def create_verification_code(email: str,redis_client) -> str:
     # 生成6位随机验证码
@@ -151,3 +149,21 @@ async def check_email_rate_limit(email:str,redis_client,limit_interval:int=300,m
             return True
         else:
             return False
+
+#PEM的格式
+header = "-----BEGIN PRIVATE KEY-----\n"
+footer = "\n-----END PRIVATE KEY-----"
+api_key=header+api_key+footer
+#通过api访问和风天气
+payload = {
+    'iat' : int(time.time()) - 30,
+    'exp' : int(time.time()) + 300,
+    'sub' : api_id #凭据的项目id
+}
+
+headers = {
+    'kid' : key_id#凭据id
+}
+
+encoded_jwt = jwt.encode(payload, api_key, algorithm='EdDSA', headers = headers)
+

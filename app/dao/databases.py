@@ -2,8 +2,10 @@
 from sqlalchemy.ext.asyncio import create_async_engine,AsyncSession
 from sqlalchemy.orm import sessionmaker
 from typing import AsyncGenerator
-
-DATABASE_URL = "mysql+asyncmy://root:Fkiwi191954@localhost/weatherweb"#配置文件
+import os
+from dotenv import load_dotenv
+load_dotenv()
+DATABASE_URL = os.environ.get("DATABASE_URL")#配置文件
 '''def get_db():
     db = Session(bind=engine)
     try:
