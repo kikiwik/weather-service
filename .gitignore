@@ -4,6 +4,13 @@
 # 忽略特定文件
 .env
 .venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.env/
+.venv/
 # 忽略目录（末尾加 / ）
 node_modules/
 build/
@@ -16,4 +23,4 @@ build/
 .vscode/
 
 #忽略pycache
-__pycache__
+__pycache__/
