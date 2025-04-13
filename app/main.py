@@ -1,11 +1,12 @@
 #main
 from fastapi import FastAPI,Request,Response,status,Depends
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from dao.redis import redis_connect
-from dao import databases
-from utils.services import email_worker,create_verification_code
-from routers import users
+from dao import databases,schemas
+from utils.services import email_worker
+from routers import users,servers
 from redis import Redis
 import asyncio
 import json
@@ -38,11 +39,19 @@ app=FastAPI(
     lifespan=lifespan
 )
 
+@app.exception_handler(schemas.BusinessException)
+async def business_exception_handler(request: Request, exc: schemas.BusinessException):
+    return JSONResponse(
+        status_code=200,  # 业务错误使用 200 状态码，具体错误由 code 区分
+        content={"code": exc.code, "message": exc.message, "data": exc.data},
+    )
+
 @app.get("/")
 async def status_test():
     return{"message":"OK"}
 
-app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(users.router, prefix="/weather-service/users",tags=["users"])
+app.include_router(servers.router, prefix="/weather-service/servers", tags=["servers"])
 
 #测试
 @app.post("/test-send-verification-code")

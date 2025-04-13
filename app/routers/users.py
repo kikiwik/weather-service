@@ -1,5 +1,6 @@
 # routers/users
-from fastapi import APIRouter, Depends, HTTPException,Query
+from fastapi import APIRouter, Depends, HTTPException,Query,Response,Request,status
+from fastapi.responses import RedirectResponse,HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis import Redis
 from dao.redis import redis_connect
@@ -9,77 +10,12 @@ import asyncio
 import time
 import json
 import httpx
+import secrets
+#import requests
+
 router = APIRouter()
 
-'''@router.post("/register", response_model=schemas.UserResponse)#注册用户
-def register_user(user: schemas.UserCreate, db: Session = Depends(databases.get_db)):
-    existing_user = crud.get_user_by_email(db, email=user.email)
-    if existing_user:
-        raise HTTPException(status_code=409, detail="Email already registered")
-    services.password_validator(user.password)
-    
-    code=services.create_verification_code(email=user.email)
-    ret = services.send_verification_code(code=code,email=user.email)
-    if ret :
-        print("验证码发送成功")
-    else:
-        print("验证码发送失败")
-    
-    new_user = crud.create_user(db, user=user)
-    return new_user
-
-    asyncio.create_task(services.delete_expired_codes())
-    ret = services.send_verification_code(code=code,email=user.email)
-    if ret :
-        print("验证码发送成功")
-    else:
-        print("验证码发送失败")
-    new_user = crud.create_user(db, user=user)
-    session_token = crud.create_token(db, user_id=new_user.user_id)
-    return {"user": new_user, 
-            "token": session_token["token"],
-            "permissions": session_token["permissions"],
-            "expires_time": session_token["expires_time"]}
-
-@router.post("/login/password", response_model=schemas.UserResponse)
-def login_user(user: schemas.UserLoginA, db: Session = Depends(databases.get_db)):
-    # 在数据库中查找用户
-    services.password_validator(user.password)
-    db_user = crud.get_user_by_email(db, email=user.email)
-    if not db_user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if not services.verify_password(user.password, db_user.password):
-        raise HTTPException(status_code=401, detail="Incorrect password")
-    session_token = crud.create_or_update_token(db, user_id=db_user.user_id)
-    return {"user": db_user,  
-            "token": session_token["token"],
-            "permissions": session_token["permissions"],
-            "expires_time": session_token["expires_time"]}
-
-@router.post("/login/verification_code",response_model=schemas.UserResponse)
-async def login_user(user:schemas.UserloginB,db: Session = Depends(databases.get_db)):
-    #查找用户
-    db_user = crud.get_user_by_email(db,email=user.email)
-    if not db_user:
-        raise HTTPException(status_code=404,detail="User not found !")
-    code=services.create_verification_code(email=db_user.email)
-    asyncio.create_task(services.delete_expired_codes())
-    ret = services.send_verification_code(code=code,email=db_user.email)
-    if ret :
-        print("验证码发送成功")
-    else:
-        print("验证码发送失败")
-
-        if services.verify_verification_code(code=user.verification_code, email=db_user.email):
-            session_token = crud.create_or_update_token(db, user_id=db_user.user_id)
-        return {"user": db_user, 
-                "token": session_token["token"],
-                "permissions": session_token["permissions"],
-                "expires_time": session_token["expires_time"]}
-    
-    raise HTTPException(status_code=401, detail="Verification code is incorrect or has expired.")'''
-
-@router.post("/register")
+@router.post("/register",response_model=schemas.ApiResponse)
 async def register_user(
     user:schemas.UserCreate,
     db: AsyncSession = Depends(databases.get_async_db),
@@ -89,16 +25,21 @@ async def register_user(
         
         existing_user=await crud.get_user_by_email(db,user.email)
         if existing_user:
-                raise HTTPException(409,detail="Email already registered")
+                raise schemas.BusinessException(schemas.ErrorCodes.ACCOUNT_EMAIL_EXISTS, "邮箱已经被注册")
         if not await services.check_email_rate_limit(user.email,redis_client): 
-            raise HTTPException (409,detail="Verification send too fast !")
+            raise schemas.BusinessException(
+                schemas.ErrorCodes.REQUEST_TOO_FREQUENT, "Verification send too fast!"
+            )
         await redis_client.rpush("email_queue", json.dumps({
                 "email": user.email,
                 "timestamp": time.time()
                 }))
-
+    except schemas.BusinessException as be:
+        raise be
     except Exception as e:
-             raise HTTPException(422,detail=str(e))
+             raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"服务器内部错误: {str(e)}"
+        )
     ''' ret =await (services.verify_verification_code(user.email,redis_client))
         if ret==True:
              new_user=await crud.create_user(db,user)
@@ -113,17 +54,44 @@ async def verify_user_input_code(
       db: AsyncSession = Depends(databases.get_async_db),
       redis_client: Redis = Depends(redis_connect)
 ):  
-    ret =await services.verify_verification_code(user.email,code,redis_client)
-    if ret==True:
-        new_user=await crud.create_user(db,user)
-        return new_user
-    else :
-        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+    try:
+        ret =await services.verify_verification_code(user.email,code,redis_client)
+        if ret==True:
+            new_user=await crud.create_user(db,user)
+            return new_user
+        else :
+            raise schemas.BusinessException(
+                schemas.ErrorCodes.CAPTCHA_ERROR, "验证码错误或已过期"
+            )
+    except schemas.BusinessException as be:
+        raise be
+    except Exception as e:
+        # 捕捉未知错误，返回服务器内部错误：4007
+        raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"服务器内部错误，请稍后重试: {str(e)}"
+        )   
     
-@router.post("/login/by_pswd")
+@router.post("/login")
+async def login(
+    request: Request,
+    redis_client: Redis = Depends(redis_connect)
+):
+    # 尝试从请求 Cookie 中获取 token
+    token = request.cookies.get("session_token")
+    if token:
+        # 在 Redis 中检查该 token 是否有效
+        session_data = await redis_client.get(token)
+        if session_data:
+            return RedirectResponse(url="/api/users//weather-service", status_code=status.HTTP_200_OK)
+    # 如果没有 token 或 Redis 中未找到匹配数据，说明需要重新登录
+    return RedirectResponse(url="/api/users/login/by_pswd", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+@router.post("/login/by_pswd",response_model=schemas.ApiResponse)
 async def login_by_pswd(
      user:schemas.UserLoginByPassword,
-     db:AsyncSession = Depends(databases.get_async_db)
+     response: Response,
+     db:AsyncSession = Depends(databases.get_async_db),
+     redis_client: Redis = Depends(redis_connect)
 ):
     try:
         
@@ -133,17 +101,29 @@ async def login_by_pswd(
         else:
             ret = services.verify_password(user.password,login_user.password)
             if ret == True:
-                 return {"message":"login sucsessfully !"}
+                token = await services.create_session_token(login_user.email, redis_client)
+                response.set_cookie(
+                    key="session_token", 
+                    value=token, 
+                    httponly=True, 
+                    secure=True,  # 如果是https环境下建议开启
+                    max_age=3600  # 过期时间（秒）
+                )
+                return {"code": schemas.ErrorCodes.SUCCESS, "message": "登录成功", "data": None}
             else:
                 # 密码错误的情况
-                raise HTTPException(status_code=401, detail="password error !")
-    except HTTPException as http_exc:
-        raise http_exc
+                raise schemas.BusinessException(
+                    schemas.ErrorCodes.ACCOUNT_PASSWORD_ERROR, "密码错误！"
+                )
+    except schemas.BusinessException as be:
+        raise be
     except Exception as e:
-        print(f"登录过程中发生未知错误: {e}") 
-        raise HTTPException( status_code=500, detail="服务器内部错误，请稍后重试")
+        # 捕捉未知错误，返回服务器内部错误：4007
+        raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"服务器内部错误，请稍后重试: {str(e)}"
+        )
 
-@router.post("/login/by_verification_code")
+@router.post("/login/by_verification_code",response_model=schemas.ApiResponse)
 async def login_by_Vcode(
     user:schemas.UserEmail,
     db:AsyncSession = Depends(databases.get_async_db),
@@ -152,21 +132,27 @@ async def login_by_Vcode(
     try:
         login_user=await crud.get_user_by_email(db,user.email)
         if not login_user:
-            raise HTTPException(401,detail="Email do not registered")
+            raise schemas.BusinessException(
+                schemas.ErrorCodes.ACCOUNT_NOT_LOGGED_IN, "Email未注册"
+            )
         else:
             if not await services.check_email_rate_limit(user.email,redis_client): 
-                raise HTTPException (409,detail="Verification send too fast !")
+                raise schemas.BusinessException(
+                    schemas.ErrorCodes.REQUEST_TOO_FREQUENT, "Verification send too fast!"
+                )
             await redis_client.rpush("email_queue", json.dumps({
                 "email": user.email,
                 "timestamp": time.time()
                 }))        
-    except HTTPException as http_exc:
-        raise http_exc
+    except schemas.BusinessException as be:
+        raise be
     except Exception as e:
-        print(f"登录过程中发生未知错误: {e}") 
-        raise HTTPException( status_code=500, detail="服务器内部错误，请稍后重试")
+        # 捕捉未知错误，返回服务器内部错误：4007
+        raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"服务器内部错误，请稍后重试: {str(e)}"
+        )
     
-@router.post("/login/verify")
+@router.post("/login/verify",response_model=schemas.ApiResponse)
 async def verify_user_input_code(
       user:schemas.UserLoginByVcode,
       db: AsyncSession = Depends(databases.get_async_db),
@@ -175,11 +161,44 @@ async def verify_user_input_code(
     try:
         ret =await services.verify_verification_code(user.email,user.verify_code,redis_client)
         if ret==True:
-            return {"message":"login sucsessfully !"}
+            return {"code": schemas.ErrorCodes.SUCCESS, "message": "登录成功", "data": None}
         else :
-            raise HTTPException(status_code=400, detail="Invalid or expired verification code")
-    except HTTPException as http_exc:
-        raise http_exc
+            raise schemas.BusinessException(
+                schemas.ErrorCodes.CAPTCHA_ERROR, "验证码错误或已过期"
+            )
+    except schemas.BusinessException as be:
+        raise be
     except Exception as e:
-        print(f"登录过程中发生未知错误: {e}") 
-        raise HTTPException( status_code=500, detail="服务器内部错误，请稍后重试")
+        # 捕捉未知错误，返回服务器内部错误：4007
+        raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"服务器内部错误，请稍后重试: {str(e)}"
+        )
+    
+'''@router.post("/get_weather_by_grid")
+async def get_weather_by_location(
+    location: schemas.Grid
+):
+    url = "https://devapi.qweather.com/v7/grid-weather/24h"
+    try:
+        token =  services.get_api_token()
+        params={
+            "location": f"{location.lon},{location.lat}"
+        }
+        header_req = {"Authorization": f"Bearer {token}"}
+        response = requests.get(url,params=params,headers=header_req)
+        
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        print(f"发生错误: {e}")'''
+@router.get("/weather-service", response_class=HTMLResponse) #  如果您想返回 HTML 页面
+async def weather_service_page():
+    #  这里返回您的主页面 HTML 内容，或者渲染模板
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>天气服务主页面</title></head>
+    <body><h1>欢迎来到天气服务主页面！</h1></body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)

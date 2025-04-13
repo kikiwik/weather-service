@@ -1,0 +1,136 @@
+from fastapi import APIRouter,Depends,Request,HTTPException,Security
+import requests
+from sqlalchemy.ext.asyncio import AsyncSession
+from redis import Redis
+from dao.redis import redis_connect
+from dao import crud, databases,schemas
+from utils import services
+
+router = APIRouter()
+
+@router.post("/get_weather_by_grid",dependencies=[Security(services.check_user,scopes=['query'])],response_model=schemas.ApiResponse)
+async def get_weather_by_location(
+    location: schemas.Grid
+):
+    url = "https://devapi.qweather.com/v7/grid-weather/24h"#todo 改为.env
+    try:
+        token =  services.get_api_token()
+        params={
+            "location": f"{location.lon},{location.lat}"
+        }
+        header_req = {"Authorization": f"Bearer {token}"}
+        response =requests.get(url,params=params,headers=header_req)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if "hourly" in data:
+                # 仅保留每个小时预报中的 fxTime、temp、icon 和 text 字段
+                filtered_hourly = []
+                for item in data["hourly"]:
+                    filtered_item = {
+                        "fxTime": item.get("fxTime"),
+                        "temp": item.get("temp"),
+                        "icon": item.get("icon"),
+                        "text": item.get("text")
+                    }
+                    filtered_hourly.append(filtered_item)
+                data["hourly"] = filtered_hourly
+            return {"code": schemas.ErrorCodes.SUCCESS, "message": "成功", "data": data}
+        else:
+            # 当第三方接口响应状态码不为200时，抛出第三方接口响应错误
+            raise schemas.BusinessException(
+                schemas.ErrorCodes.THIRD_PARTY_API_ERROR, "获取天气数据失败"
+            )
+    except schemas.BusinessException as be:
+            raise be
+    except Exception as e:
+        # 捕捉未知错误，返回服务器内部错误：4007
+            raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"服务器内部错误，请稍后重试: {str(e)}"
+            )
+
+            
+async def fetch_weather_data(city_id_request: schemas.CityIdRequest):
+    # 使用最新的天气预报接口地址，这里以七天预报为例，实际可根据需求选择 /v7/weather/3d 或 /v7/weather/7d
+    url = "https://devapi.qweather.com/v7/weather/7d"  
+    try:
+        # 获取 API token（这里假设 token 实际上是 API key）
+        token = services.get_api_token()
+        params = {
+            "location": city_id_request.city_id,
+        }
+        header_req = {"Authorization": f"Bearer {token}"}
+        response =requests.get(url,params=params,headers=header_req)
+        if response.status_code == 200:
+            data = response.json()
+
+            filtered_daily = []
+            for item in data.get("daily", []):
+                 filtered_daily.append({
+                    "fxDate": item.get("fxDate"),
+                    "tempMax": item.get("tempMax"),
+                    "tempMin": item.get("tempMin"),
+                    "textDay": item.get("textDay"),
+                    "textNight": item.get("textNight")
+                 })
+            data["daily"] = filtered_daily
+
+            return {"code": schemas.ErrorCodes.SUCCESS, "message": "成功", "data": data}
+        else:
+            error_detail = response.text
+            print(f"错误详情: {error_detail}")
+            raise  schemas.BusinessException(
+            schemas.ErrorCodes.THIRD_PARTY_API_ERROR, f"服务请求失败: {str(e)}"
+            )
+    except schemas.BusinessException as be:
+        # 已知业务异常直接传递给客户端
+        raise be
+    except Exception as e:
+        raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, "服务器内部错误，请稍后重试"
+        )
+@router.post(
+    "/get_weather_by_city_name",
+    dependencies=[Security(services.check_user, scopes=['query'])],
+    response_model=schemas.ApiResponse
+)
+
+async def get_weather_by_city_name(city: schemas.CityNameRequest):
+    # 调用 GeoAPI 获取 city_id
+    geo_url = "https://geoapi.qweather.com/v2/city/lookup"
+    token = services.get_api_token()
+    params = {
+        "location": city.city_name,  # 城市名称
+    }
+    header_req = {"Authorization": f"Bearer {token}"}
+    try:
+        response = requests.get(geo_url, params=params,headers=header_req)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("code") == "200":  # GeoAPI 成功
+                locations = data.get("location", [])
+                if locations:
+                    city_id = locations[0].get("id")  # 取第一个匹配的城市 ID
+                    print(city_id)
+                    city_id_request = schemas.CityIdRequest(city_id=city_id)
+                    # 使用 city_id 请求天气数据
+                    return await fetch_weather_data(city_id_request)
+                else:
+                     raise schemas.BusinessException(
+            schemas.ErrorCodes.CITY_NOT_EXIST, f"城市未找到: {str(e)}"
+        )
+            else:
+                 raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"城市名称错误: {str(e)}"
+        )
+        else:
+             raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"GeoAPI请求失败: {str(e)}"
+        )
+    except schemas.BusinessException as be:
+        # 已知业务异常直接传递给客户端
+        raise be
+    except Exception as e:
+        raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, "服务器内部错误，请稍后重试"
+        )

@@ -12,3 +12,4 @@ class emailSettings:
     }
 
 email_settings = emailSettings()
+#删
