@@ -1,9 +1,12 @@
+import os
+from dotenv import load_dotenv
 import redis.asyncio as redis
 from redis.exceptions import ConnectionError,TimeoutError
 
+load_dotenv()
 redis_pool = redis.ConnectionPool(
-    host='127.0.0.1',
-    port=6379
+    host=os.environ.get("REDIS_HOST"),
+    port=os.environ.get("REIDS_PORT")
 )
 
 async def redis_connect():

@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from enum import Enum as PyEnum
 import random
 import string
+from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
 Base = declarative_base()
@@ -16,13 +17,11 @@ class UserStatus(PyEnum):
     believable = "believable"
     AD = "AD"
 
-def generate_uuid():
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=8))
 
 class User(Base):
     __tablename__ = 'users'
     
-    user_id = Column(String(8), primary_key=True, default=generate_uuid)
+    user_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nickname = Column(String(12))
     email = Column(String(255), unique=True, nullable=False)
     password = Column(String(255), nullable=False)

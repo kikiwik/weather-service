@@ -2,8 +2,15 @@
 *.log
 
 # 忽略特定文件
-secrets.env
-
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.env/
+.venv/
 # 忽略目录（末尾加 / ）
 node_modules/
 build/
@@ -15,4 +22,5 @@ build/
 .idea/
 .vscode/
 
-
+#忽略pycache
+__pycache__/

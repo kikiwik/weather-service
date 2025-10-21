@@ -6,13 +6,13 @@
 创建虚拟环境（windows）
 
 ```
-python -m venv env
+python -m venv .env
 ```
 
 进入虚拟环境
 
 ```
-env\Scripts\activate
+.venv\Scripts\activate
 ```
 
 更新pip
@@ -33,3 +33,7 @@ echo 'fastapi[all]==0.115.6' > requirements.txt
 uvicorn main:app
 ```
 
+依赖项安装
+```
+pip install -r requirements.txt
+```
