@@ -74,8 +74,6 @@ curl -X POST /weather-service/servers/get_weather_by_grid_with_ai_analysis \
 - 注意API调用频率和费用
 - 建议添加缓存机制
 
-## 许可证
-MIT License
 
 ## 未来规划
 - 支持多种AI模型
