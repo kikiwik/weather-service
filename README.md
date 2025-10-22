@@ -52,5 +52,3 @@ uvicorn app.main:app --reload
 ## 接口文档
 服务启动后，访问 `/docs` 查看Swagger文档
 
-## 许可证
-MIT License
