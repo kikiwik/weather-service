@@ -134,3 +134,123 @@ async def get_weather_by_city_name(city: schemas.CityNameRequest):
         raise schemas.BusinessException(
             schemas.ErrorCodes.SERVER_INTERNAL_ERROR, "服务器内部错误，请稍后重试"
         )
+@router.post("/get_weather_by_district_code", dependencies=[Security(services.check_user,scopes=['query'])], response_model=schemas.ApiResponse)
+async def get_weather_by_district_code(
+    district_code: schemas.DistrictCodeRequest,
+):
+    """
+    通过行政区域编码查询天气预报
+    支持精确到县区级别的天气查询
+    """
+    url = "https://devapi.qweather.com/v7/weather/7d"
+    try:
+        token = services.get_api_token()
+        params = {
+            "location": district_code.district_code,
+        }
+        header_req = {"Authorization": f"Bearer {token}"}
+        response = requests.get(url, params=params, headers=header_req)
+        
+        if response.status_code == 200:
+            data = response.json()
+            filtered_daily = []
+            for item in data.get("daily", []):
+                filtered_daily.append({
+                    "fxDate": item.get("fxDate"),
+                    "tempMax": item.get("tempMax"),
+                    "tempMin": item.get("tempMin"),
+                    "textDay": item.get("textDay"),
+                    "textNight": item.get("textNight"),
+                    "windDir": item.get("windDir"),
+                    "windScale": item.get("windScale")
+                })
+            data["daily"] = filtered_daily
+
+            return {"code": schemas.ErrorCodes.SUCCESS, "message": "成功", "data": data}
+        else:
+            raise schemas.BusinessException(
+                schemas.ErrorCodes.THIRD_PARTY_API_ERROR, "获取天气数据失败"
+            )
+    except schemas.BusinessException as be:
+        raise be
+    except Exception as e:
+        raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"服务器内部错误: {str(e)}"
+        )
+
+@router.post("/get_air_quality", dependencies=[Security(services.check_user,scopes=['query'])], response_model=schemas.ApiResponse)
+async def get_air_quality(
+    location: schemas.Grid,
+):
+    """
+    获取指定坐标点的实时空气质量情况
+    """
+    url = "https://devapi.qweather.com/v7/air/now"
+    try:
+        token = services.get_api_token()
+        params = {
+            "location": f"{location.lon},{location.lat}"
+        }
+        header_req = {"Authorization": f"Bearer {token}"}
+        response = requests.get(url, params=params, headers=header_req)
+        
+        if response.status_code == 200:
+            data = response.json()
+            air_quality_data = {
+                "primary_pollutant": data.get("now", {}).get("primary"),
+                "air_quality_index": data.get("now", {}).get("aqi"),
+                "quality_level": data.get("now", {}).get("category"),
+                "pm10": data.get("now", {}).get("pm10"),
+                "pm2_5": data.get("now", {}).get("pm2p5")
+            }
+
+            return {"code": schemas.ErrorCodes.SUCCESS, "message": "空气质量查询成功", "data": air_quality_data}
+        else:
+            raise schemas.BusinessException(
+                schemas.ErrorCodes.THIRD_PARTY_API_ERROR, "获取空气质量数据失败"
+            )
+    except schemas.BusinessException as be:
+        raise be
+    except Exception as e:
+        raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"服务器内部错误: {str(e)}"
+        )
+
+@router.post("/get_weather_warning", dependencies=[Security(services.check_user,scopes=['query'])], response_model=schemas.ApiResponse)
+async def get_weather_warning(
+    location: schemas.Grid,
+):
+    """
+    获取指定坐标点的实时灾害预警信息
+    """
+    url = "https://devapi.qweather.com/v7/warning/now"
+    try:
+        token = services.get_api_token()
+        params = {
+            "location": f"{location.lon},{location.lat}"
+        }
+        header_req = {"Authorization": f"Bearer {token}"}
+        response = requests.get(url, params=params, headers=header_req)
+        
+        if response.status_code == 200:
+            data = response.json()
+            warnings = []
+            for warning in data.get("warning", []):
+                warnings.append({
+                    "title": warning.get("title"),
+                    "type": warning.get("type"),
+                    "level": warning.get("level"),
+                    "text": warning.get("text")
+                })
+
+            return {"code": schemas.ErrorCodes.SUCCESS, "message": "灾害预警查询成功", "data": warnings}
+        else:
+            raise schemas.BusinessException(
+                schemas.ErrorCodes.THIRD_PARTY_API_ERROR, "获取灾害预警数据失败"
+            )
+    except schemas.BusinessException as be:
+        raise be
+    except Exception as e:
+        raise schemas.BusinessException(
+            schemas.ErrorCodes.SERVER_INTERNAL_ERROR, f"服务器内部错误: {str(e)}"
+        )

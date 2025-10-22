@@ -112,6 +112,17 @@ class BusinessException(Exception):
         self.message = message
         self.data = data
 
+class DistrictCodeRequest(BaseModel):
+    district_code: str  # 行政区域编码
+
+# 空气质量数据模型
+class AirQualityResponse(BaseModel):
+    primary_pollutant: str
+    air_quality_index: int
+    quality_level: str
+    pm10: int
+    pm2_5: int
+
 class ErrorCodes:
     # 成功
     SUCCESS = 0
