@@ -123,6 +123,12 @@ class AirQualityResponse(BaseModel):
     pm10: int
     pm2_5: int
 
+
+class WeatherWithAIAnalysisResponse(BaseModel):
+    code: int
+    message: str
+    data: Dict[str, Any]
+
 class ErrorCodes:
     # 成功
     SUCCESS = 0
